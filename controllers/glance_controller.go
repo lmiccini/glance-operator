@@ -579,6 +579,9 @@ func (r *GlanceReconciler) reconcileNormal(ctx context.Context, instance *glance
 		common.AppSelector: glance.ServiceName,
 	}
 
+	// Track quorum queue status for annotation setting
+	var quorumQueue bool
+
 	//
 	// create RabbitMQ transportURL CR and get the actual URL from the associated secret that is created
 	//
@@ -599,6 +602,9 @@ func (r *GlanceReconciler) reconcileNormal(ctx context.Context, instance *glance
 		}
 
 		instance.Status.NotificationBusSecret = notificationTransportURL.Status.SecretName
+
+		// Check if the notification transport URL has quorum queue enabled
+		quorumQueue = notificationTransportURL.GetQuorumQueues()
 
 		if instance.Status.NotificationBusSecret == "" {
 			Log.Info(fmt.Sprintf("Waiting for notification TransportURL %s secret to be created", notificationTransportURL.Name))
@@ -730,7 +736,7 @@ func (r *GlanceReconciler) reconcileNormal(ctx context.Context, instance *glance
 	// Reconcile the GlanceAPI deployment
 	//
 	for name, glanceAPI := range instance.Spec.GlanceAPIs {
-		err = r.apiDeployment(ctx, instance, name, glanceAPI, helper, serviceLabels)
+		err = r.apiDeployment(ctx, instance, name, glanceAPI, helper, serviceLabels, quorumQueue)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
@@ -788,6 +794,7 @@ func (r *GlanceReconciler) apiDeployment(
 	current glancev1.GlanceAPITemplate,
 	helper *helper.Helper,
 	serviceLabels map[string]string,
+	quorumQueue bool,
 ) error {
 	Log := r.GetLogger(ctx)
 
@@ -845,6 +852,7 @@ func (r *GlanceReconciler) apiDeployment(
 		helper,
 		serviceLabels,
 		wsgi,
+		quorumQueue,
 	)
 	if err != nil {
 		instance.Status.Conditions.Set(condition.FalseCondition(
@@ -894,6 +902,7 @@ func (r *GlanceReconciler) apiDeployment(
 			helper,
 			serviceLabels,
 			wsgi,
+			quorumQueue,
 		)
 		if err != nil {
 			instance.Status.Conditions.Set(condition.FalseCondition(
@@ -942,6 +951,7 @@ func (r *GlanceReconciler) apiDeploymentCreateOrUpdate(
 	helper *helper.Helper,
 	serviceLabels map[string]string,
 	wsgi bool,
+	quorumQueue bool,
 ) (*glancev1.GlanceAPI, controllerutil.OperationResult, error) {
 	apiAnnotations := map[string]string{}
 	apiSpec := glancev1.GlanceAPISpec{
@@ -999,6 +1009,9 @@ func (r *GlanceReconciler) apiDeploymentCreateOrUpdate(
 
 	// Set deployment mode (proxypass vs mod_wsgi)
 	apiAnnotations[glancev1.GlanceWSGILabel] = strconv.FormatBool(wsgi)
+
+	// Set quorum queue annotation if notification bus is using quorum queues
+	apiAnnotations[glancev1.GlanceQuorumQueueLabel] = strconv.FormatBool(quorumQueue)
 
 	// Add the API name to the GlanceAPI instance as a label
 	serviceLabels[glancev1.APINameLabel] = apiName

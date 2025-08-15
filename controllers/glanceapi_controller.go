@@ -1278,6 +1278,12 @@ func (r *GlanceAPIReconciler) generateServiceConfig(
 		templateParameters["TransportURL"] = string(notificationBusSecret.Data["transport_url"])
 	}
 
+	// Check for quorum queue annotation and set template parameter
+	if quorumQueues, exists, err := annotations.GetBoolFromAnnotation(
+		instance.GetAnnotations(), glancev1.GlanceQuorumQueueLabel); err == nil && exists && quorumQueues {
+		templateParameters["QuorumQueues"] = true
+	}
+
 	// 00-default.conf will be regenerated as we have a ln -s of the
 	// templates/glance/config directory
 	// Do not generate -scripts as they are inherited from the top-level CR
