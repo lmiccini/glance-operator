@@ -1242,4 +1242,135 @@ var _ = Describe("Glance controller", func() {
 			}, timeout, interval).Should(Succeed())
 		})
 	})
+	When("TransportURL consumer finalizer is managed", func() {
+		BeforeEach(func() {
+			DeferCleanup(k8sClient.Delete, ctx, CreateGlanceMessageBusSecret(glanceTest.Instance.Namespace, glanceTest.RabbitmqSecretName))
+			DeferCleanup(infra.DeleteMemcached, infra.CreateMemcached(namespace, glanceTest.MemcachedInstance, memcachedSpec))
+			infra.SimulateMemcachedReady(glanceTest.GlanceMemcached)
+			DeferCleanup(th.DeleteInstance, CreateGlance(glanceTest.Instance, GetGlanceDefaultSpec(), annotations))
+			DeferCleanup(
+				mariadb.DeleteDBService,
+				mariadb.CreateDBService(
+					glanceTest.Instance.Namespace,
+					GetGlance(glanceTest.Instance).Spec.DatabaseInstance,
+					corev1.ServiceSpec{
+						Ports: []corev1.ServicePort{{Port: 3306}},
+					},
+				),
+			)
+			DeferCleanup(keystone.DeleteKeystoneAPI, keystone.CreateKeystoneAPI(glanceTest.Instance.Namespace))
+			infra.SimulateTransportURLReady(glanceTest.GlanceTransportURL)
+			mariadb.SimulateMariaDBDatabaseCompleted(glanceTest.GlanceDatabaseName)
+			mariadb.SimulateMariaDBAccountCompleted(glanceTest.GlanceDatabaseAccount)
+			th.SimulateJobSuccess(glanceTest.GlanceDBSync)
+			keystone.SimulateKeystoneServiceReady(glanceTest.KeystoneService)
+			keystone.SimulateKeystoneEndpointReady(glanceTest.GlanceSingle)
+		})
+
+		It("should add the consumer finalizer to the notification transport secret", func() {
+			Eventually(func(g Gomega) {
+				secret := th.GetSecret(types.NamespacedName{
+					Namespace: glanceTest.Instance.Namespace,
+					Name:      glanceTest.RabbitmqSecretName,
+				})
+				g.Expect(secret.Finalizers).To(
+					ContainElement(glance.TransportConsumerFinalizer))
+			}, timeout, interval).Should(Succeed())
+		})
+
+		It("should remove the consumer finalizer from notification transport secret on CR deletion", func() {
+			Eventually(func(g Gomega) {
+				secret := th.GetSecret(types.NamespacedName{
+					Namespace: glanceTest.Instance.Namespace,
+					Name:      glanceTest.RabbitmqSecretName,
+				})
+				g.Expect(secret.Finalizers).To(
+					ContainElement(glance.TransportConsumerFinalizer))
+			}, timeout, interval).Should(Succeed())
+
+			th.DeleteInstance(GetGlance(glanceTest.Instance))
+
+			Eventually(func(g Gomega) {
+				secret := th.GetSecret(types.NamespacedName{
+					Namespace: glanceTest.Instance.Namespace,
+					Name:      glanceTest.RabbitmqSecretName,
+				})
+				g.Expect(secret.Finalizers).NotTo(
+					ContainElement(glance.TransportConsumerFinalizer))
+			}, timeout, interval).Should(Succeed())
+		})
+
+		It("should move the finalizer from the old to the new notification secret on transport rotation", func() {
+			oldSecretName := glanceTest.RabbitmqSecretName
+
+			// 1. Wait for finalizer on old secret
+			Eventually(func(g Gomega) {
+				secret := th.GetSecret(types.NamespacedName{
+					Namespace: glanceTest.Instance.Namespace,
+					Name:      oldSecretName,
+				})
+				g.Expect(secret.Finalizers).To(
+					ContainElement(glance.TransportConsumerFinalizer))
+			}, timeout, interval).Should(Succeed())
+
+			// 2. Create new secret and update TransportURL status to point to it
+			newSecretName := "rabbitmq-secret-rotated"
+			newSecret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: glanceTest.Instance.Namespace,
+					Name:      newSecretName,
+				},
+				Data: map[string][]byte{
+					"transport_url": []byte("rabbit://rabbitmq-secret-rotated/fake"),
+				},
+			}
+			Expect(k8sClient.Create(ctx, newSecret)).To(Succeed())
+			DeferCleanup(k8sClient.Delete, ctx, newSecret)
+
+			Eventually(func(g Gomega) {
+				transport := infra.GetTransportURL(glanceTest.GlanceTransportURL)
+				transport.Status.SecretName = newSecretName
+				g.Expect(k8sClient.Status().Update(ctx, transport)).To(Succeed())
+			}, timeout, interval).Should(Succeed())
+
+			// 4. New secret gets the consumer finalizer
+			Eventually(func(g Gomega) {
+				secret := th.GetSecret(types.NamespacedName{
+					Namespace: glanceTest.Instance.Namespace,
+					Name:      newSecretName,
+				})
+				g.Expect(secret.Finalizers).To(
+					ContainElement(glance.TransportConsumerFinalizer))
+			}, timeout, interval).Should(Succeed())
+
+			// 5. Old secret STILL has the finalizer (waiting for sub-services to roll)
+			Consistently(func(g Gomega) {
+				secret := th.GetSecret(types.NamespacedName{
+					Namespace: glanceTest.Instance.Namespace,
+					Name:      oldSecretName,
+				})
+				g.Expect(secret.Finalizers).To(
+					ContainElement(glance.TransportConsumerFinalizer))
+			}, timeout, interval).Should(Succeed())
+
+			// 6. Simulate sub-services ready again after the config change
+			th.SimulateStatefulSetReplicaReady(glanceTest.GlanceSingle)
+
+			// 7. Old secret loses the finalizer
+			Eventually(func(g Gomega) {
+				secret := th.GetSecret(types.NamespacedName{
+					Namespace: glanceTest.Instance.Namespace,
+					Name:      oldSecretName,
+				})
+				g.Expect(secret.Finalizers).NotTo(
+					ContainElement(glance.TransportConsumerFinalizer))
+			}, timeout, interval).Should(Succeed())
+
+			// 8. Status.NotificationBusSecret updated to new secret name
+			Eventually(func(g Gomega) {
+				instance := GetGlance(glanceTest.Instance)
+				g.Expect(instance.Status.NotificationBusSecret).To(Equal(newSecretName))
+			}, timeout, interval).Should(Succeed())
+		})
+	})
 })
