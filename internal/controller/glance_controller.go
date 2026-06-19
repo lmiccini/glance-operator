@@ -812,25 +812,18 @@ func (r *GlanceReconciler) reconcileNormal(ctx context.Context, instance *glance
 	instance.Status.Conditions.MarkTrue(condition.CronJobReadyCondition, condition.CronJobReadyMessage)
 	// create CronJob - end
 
-	// Notification transport secret rotation guard: only release the old
-	// secret's consumer finalizer after all services have rolled.
 	if newNotificationSecret != "" {
-		isNotifRotation := instance.Status.NotificationBusSecret != "" &&
-			instance.Status.NotificationBusSecret != newNotificationSecret
-		if isNotifRotation {
-			if instance.Status.Conditions.AllSubConditionIsTrue() {
-				if err := rabbitmqv1.RemoveTransportSecretConsumerFinalizer(
-					ctx, helper, instance.Namespace,
-					instance.Status.NotificationBusSecret,
-					glance.TransportConsumerFinalizer,
-				); err != nil {
-					return ctrl.Result{}, err
-				}
-				instance.Status.NotificationBusSecret = newNotificationSecret
-			}
-		} else {
-			instance.Status.NotificationBusSecret = newNotificationSecret
+		secretName, err := rabbitmqv1.FinalizeTransportSecretRotation(
+			ctx, helper, instance.Namespace,
+			instance.Status.NotificationBusSecret,
+			newNotificationSecret,
+			glance.TransportConsumerFinalizer,
+			instance.Status.Conditions.AllSubConditionIsTrue(),
+		)
+		if err != nil {
+			return ctrl.Result{}, err
 		}
+		instance.Status.NotificationBusSecret = secretName
 	}
 
 	// We reached the end of the Reconcile, update the Ready condition based on
