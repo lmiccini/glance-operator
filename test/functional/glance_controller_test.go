@@ -1242,4 +1242,113 @@ var _ = Describe("Glance controller", func() {
 			}, timeout, interval).Should(Succeed())
 		})
 	})
+
+	When("TransportURL consumer finalizer is managed", func() {
+		BeforeEach(func() {
+			DeferCleanup(k8sClient.Delete, ctx,
+				CreateGlanceMessageBusSecret(
+					glanceTest.Instance.Namespace,
+					glanceTest.RabbitmqSecretName,
+				),
+			)
+			DeferCleanup(infra.DeleteMemcached, infra.CreateMemcached(namespace, glanceTest.MemcachedInstance, memcachedSpec))
+			infra.SimulateMemcachedReady(glanceTest.GlanceMemcached)
+			DeferCleanup(th.DeleteInstance, CreateGlance(glanceTest.Instance, GetGlanceDefaultSpec(), annotations))
+			DeferCleanup(
+				mariadb.DeleteDBService,
+				mariadb.CreateDBService(
+					glanceTest.Instance.Namespace,
+					GetGlance(glanceTest.Instance).Spec.DatabaseInstance,
+					corev1.ServiceSpec{
+						Ports: []corev1.ServicePort{{Port: 3306}}}))
+
+			mariadb.CreateMariaDBDatabase(glanceTest.GlanceDatabaseName.Namespace, glanceTest.GlanceDatabaseName.Name, mariadbv1.MariaDBDatabaseSpec{})
+			DeferCleanup(k8sClient.Delete, ctx, mariadb.GetMariaDBDatabase(glanceTest.GlanceDatabaseName))
+			acc, accSecret := mariadb.CreateMariaDBAccountAndSecret(glanceTest.GlanceDatabaseAccount, mariadbv1.MariaDBAccountSpec{})
+			DeferCleanup(k8sClient.Delete, ctx, acc)
+			DeferCleanup(k8sClient.Delete, ctx, accSecret)
+
+			DeferCleanup(keystone.DeleteKeystoneAPI, keystone.CreateKeystoneAPI(glanceTest.Instance.Namespace))
+
+			infra.SimulateTransportURLReady(glanceTest.GlanceTransportURL)
+			mariadb.SimulateMariaDBAccountCompleted(glanceTest.GlanceDatabaseAccount)
+			mariadb.SimulateMariaDBDatabaseCompleted(glanceTest.GlanceDatabaseName)
+			th.SimulateJobSuccess(glanceTest.GlanceDBSync)
+			keystone.SimulateKeystoneServiceReady(glanceTest.KeystoneService)
+			keystone.SimulateKeystoneEndpointReady(glanceTest.GlanceSingle)
+		})
+
+		It("should add the consumer finalizer to the transport secret", func() {
+			Eventually(func(g Gomega) {
+				secret := th.GetSecret(types.NamespacedName{
+					Namespace: glanceTest.Instance.Namespace,
+					Name:      glanceTest.RabbitmqSecretName,
+				})
+				g.Expect(secret.Finalizers).To(
+					ContainElement(glance.TransportConsumerFinalizer))
+			}, timeout, interval).Should(Succeed())
+		})
+
+		It("should remove the consumer finalizer from transport secret on CR deletion", func() {
+			Eventually(func(g Gomega) {
+				secret := th.GetSecret(types.NamespacedName{
+					Namespace: glanceTest.Instance.Namespace,
+					Name:      glanceTest.RabbitmqSecretName,
+				})
+				g.Expect(secret.Finalizers).To(
+					ContainElement(glance.TransportConsumerFinalizer))
+			}, timeout, interval).Should(Succeed())
+
+			th.DeleteInstance(GetGlance(glanceTest.Instance))
+
+			Eventually(func(g Gomega) {
+				secret := th.GetSecret(types.NamespacedName{
+					Namespace: glanceTest.Instance.Namespace,
+					Name:      glanceTest.RabbitmqSecretName,
+				})
+				g.Expect(secret.Finalizers).NotTo(
+					ContainElement(glance.TransportConsumerFinalizer))
+			}, timeout, interval).Should(Succeed())
+		})
+
+		It("should move the finalizer from the old to the new secret on transport rotation", func() {
+			oldSecretName := glanceTest.RabbitmqSecretName
+			newSecretName := "rabbitmq-secret-rotated"
+
+			Eventually(func(g Gomega) {
+				secret := th.GetSecret(types.NamespacedName{
+					Namespace: glanceTest.Instance.Namespace,
+					Name:      oldSecretName,
+				})
+				g.Expect(secret.Finalizers).To(
+					ContainElement(glance.TransportConsumerFinalizer))
+			}, timeout, interval).Should(Succeed())
+
+			newSecret := th.CreateSecret(
+				types.NamespacedName{
+					Namespace: glanceTest.Instance.Namespace,
+					Name:      newSecretName,
+				},
+				map[string][]byte{
+					"transport_url": []byte("rabbit://rotated-user:rotated-pass@rabbitmq/fake"),
+				},
+			)
+			DeferCleanup(k8sClient.Delete, ctx, newSecret)
+
+			Eventually(func(g Gomega) {
+				transport := infra.GetTransportURL(glanceTest.GlanceTransportURL)
+				transport.Status.SecretName = newSecretName
+				g.Expect(k8sClient.Status().Update(ctx, transport)).To(Succeed())
+			}, timeout, interval).Should(Succeed())
+
+			Eventually(func(g Gomega) {
+				secret := th.GetSecret(types.NamespacedName{
+					Namespace: glanceTest.Instance.Namespace,
+					Name:      newSecretName,
+				})
+				g.Expect(secret.Finalizers).To(
+					ContainElement(glance.TransportConsumerFinalizer))
+			}, timeout, interval).Should(Succeed())
+		})
+	})
 })
