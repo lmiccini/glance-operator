@@ -600,6 +600,8 @@ func (r *GlanceReconciler) reconcileNormal(ctx context.Context, instance *glance
 		notificationsRabbitMqConfig := rabbitmqv1.RabbitMqConfig{}
 		if instance.Spec.NotificationsBus != nil {
 			notificationsRabbitMqConfig = *instance.Spec.NotificationsBus
+		} else if instance.Spec.NotificationBusInstance != nil {
+			notificationsRabbitMqConfig.Cluster = *instance.Spec.NotificationBusInstance
 		}
 		notificationTransportURL, op, err := r.transportURLCreateOrUpdate(ctx, instance, serviceLabels, notificationsRabbitMqConfig)
 		if err != nil {
@@ -1112,10 +1114,6 @@ func (r *GlanceReconciler) apiDeploymentCreateOrUpdate(
 	// Set deployment mode (proxypass vs mod_wsgi)
 	apiAnnotations[glancev1.GlanceWSGILabel] = strconv.FormatBool(wsgi)
 
-	if notificationBusSecret != "" {
-		apiAnnotations["openstack.org/transport-url-secret"] = notificationBusSecret
-	}
-
 	// Add the API name to the GlanceAPI instance as a label
 	serviceLabels[glancev1.APINameLabel] = apiName
 	glanceStatefulset := &glancev1.GlanceAPI{
@@ -1477,11 +1475,7 @@ func (r *GlanceReconciler) transportURLCreateOrUpdate(
 	}
 
 	op, err := controllerutil.CreateOrUpdate(ctx, r.Client, transportURL, func() error {
-		transportURL.Spec.RabbitmqClusterName = *instance.Spec.NotificationBusInstance
-		// Always set Username and Vhost to allow clearing/resetting them
-		// The infra-operator TransportURL controller handles empty values:
-		// - Empty Username: uses default cluster admin credentials
-		// - Empty Vhost: defaults to "/" vhost
+		transportURL.Spec.RabbitmqClusterName = rabbitMqConfig.Cluster
 		transportURL.Spec.Username = rabbitMqConfig.User
 		transportURL.Spec.Vhost = rabbitMqConfig.Vhost
 		return controllerutil.SetControllerReference(instance, transportURL, r.Scheme)

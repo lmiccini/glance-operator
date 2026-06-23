@@ -66,8 +66,8 @@ github.com/kylelemons/godebug v1.1.0 h1:RPNrshWIDI6G2gRW9EHilWtl7Z6Sb1BR0xunSBf0
 github.com/kylelemons/godebug v1.1.0/go.mod h1:9/0rRGxNHcop5bhtWyNeEfOS8JIWk580+fNqagV/RAw=
 github.com/lmiccini/infra-operator/apis v0.0.0-20260623100659-aca54b995462 h1:CiQFCVrdzGgeEQqt3C39e6s9Vpi1784HIm+LNYm9py4=
 github.com/lmiccini/infra-operator/apis v0.0.0-20260623100659-aca54b995462/go.mod h1:fcTuxQ/hzNBPxCf99vbsBt7dgZ3W12gUthaCXSvkPr8=
-github.com/lmiccini/lib-common/modules/common v0.0.0-20260623081928-d67d41c03594 h1:rMCoyJyTQaekhmKJYsIgK/u6w2Gat0dd/9xgBiUlyxM=
-github.com/lmiccini/lib-common/modules/common v0.0.0-20260623081928-d67d41c03594/go.mod h1:oeIagnkOxEsxluKFcFMW80Lf1rXdV7FT2W+peB6kSE0=
+github.com/lmiccini/lib-common/modules/common v0.0.0-20260624115944-5ec800107a98 h1:OZx/6wxHDSIIcV0V1Csa+AEJxO/YB+htqUZO6j63uIU=
+github.com/lmiccini/lib-common/modules/common v0.0.0-20260624115944-5ec800107a98/go.mod h1:oeIagnkOxEsxluKFcFMW80Lf1rXdV7FT2W+peB6kSE0=
 github.com/mailru/easyjson v0.9.0 h1:PrnmzHw7262yW8sTBwxi1PdJA3Iw/EKBa8psRf7d9a4=
 github.com/mailru/easyjson v0.9.0/go.mod h1:1+xMtQp2MRNVL/V1bOzuP3aP8VNwRW55fQUto+XFtTU=
 github.com/modern-go/concurrent v0.0.0-20180228061459-e0a39a4cb421/go.mod h1:6dJC0mAP4ikYIbvyc7fijjWJddQyLn8Ig3JB5CqoB9Q=
